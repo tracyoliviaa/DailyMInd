@@ -13,7 +13,7 @@ const openai = new OpenAI({
 /**
  * Generiert eine einzelne Frage basierend auf Kategorie
  */
-export async function generateQuestion(category, difficulty = 'medium', userStrengths = {}) {
+export async function generateQuestion(category, difficulty = 'medium') {
   const prompts = {
     logic: `Erstelle eine logische Denkaufgabe (Schwierigkeit: ${difficulty}).
     

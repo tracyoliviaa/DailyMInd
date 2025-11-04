@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Clock, CheckCircle } from 'lucide-react';
 import { CategoryBadge, Button } from './UI';
 import { formatTime, getMotivationMessage, calculateAccuracy } from '../utils/helpers';
-
-// ❗ NEU: dynamischer Fragen-Generator
 import { generateDailySession } from '../services/questionGenerator';
 
 // ============================================
@@ -12,99 +10,70 @@ import { generateDailySession } from '../services/questionGenerator';
 // ============================================
 
 export default function DailySession({ 
-  onComplete,        // Callback wenn Session fertig
-  onAddPoints,       // Callback zum Punkte hinzufügen
-  onUpdateStrength,  // Callback zum Updaten der Stärken
-  userStrengths      // ❗ neu: User-Stärken als Input für KI-Generator
+  onComplete,
+  onAddPoints,
+  onUpdateStrength,
+  userStrengths = {}
 }) {
-  // ========== STATE ==========
+  // ========== STATE - ALLE GANZ OBEN! ==========
   const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
   const [sessionAnswers, setSessionAnswers] = useState([]);
   const [showResult, setShowResult] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(600); // 10 Minuten
+  const [timeLeft, setTimeLeft] = useState(600);
   const [userAnswer, setUserAnswer] = useState('');
-
-  // ❗ NEU: dynamische Fragen statt statisches dailyTasks import
+  
+  // NEU: State für generierte Fragen
   const [dailyTasks, setDailyTasks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // ========== LADEN DER FRAGEN (NEU) ==========
+  // ========== ALLE useEffect HOOKS HIER ==========
+  
+  // Effect 1: Fragen laden beim Mount
   useEffect(() => {
     async function loadQuestions() {
       setIsLoading(true);
       try {
-        // ruft KI/Logik auf → personalisierte Fragen
+        console.log('Generiere Fragen...');
         const questions = await generateDailySession(userStrengths);
         setDailyTasks(questions);
         setError(null);
+        console.log('Fragen erfolgreich geladen:', questions);
       } catch (err) {
+        console.error('Fehler beim Laden:', err);
         setError('Fragen konnten nicht geladen werden. Versuche es später erneut.');
-        console.error(err);
       } finally {
         setIsLoading(false);
       }
     }
 
     loadQuestions();
-  }, [userStrengths]); // damit sich Fragen neu generieren, wenn sich Stärken ändern
+  }, []); // Nur beim Mount ausführen
 
-  // ========== LOADING SCREEN ==========
-  if (isLoading) {
-    return (
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
-          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-6" />
-          <h3 className="text-xl font-bold mb-2">Generiere deine Fragen...</h3>
-          <p className="text-gray-600">KI erstellt personalisierte Aufgaben für dich 🤖</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ========== ERROR SCREEN ==========
-  if (error) {
-    return (
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
-          <div className="text-6xl mb-4">😕</div>
-          <h3 className="text-xl font-bold mb-2">Ups, etwas ist schiefgelaufen</h3>
-          <p className="text-gray-600 mb-6">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold"
-          >
-            Erneut versuchen
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ❗ Wichtig: ab hier läuft alles weiter wie vorher
-  const currentTask = dailyTasks[currentTaskIndex];
-
-  // ========== TIMER EFFECT ==========
+  // Effect 2: Timer
   useEffect(() => {
-    if (!sessionComplete && timeLeft > 0) {
+    if (!sessionComplete && !isLoading && timeLeft > 0 && dailyTasks.length > 0) {
       const timer = setInterval(() => {
         setTimeLeft(prev => prev - 1);
       }, 1000);
-
+      
       return () => clearInterval(timer);
     }
-
+    
     if (timeLeft === 0 && !sessionComplete) {
       handleSessionComplete();
     }
-  }, [sessionComplete, timeLeft]);
+  }, [sessionComplete, isLoading, timeLeft, dailyTasks]);
 
   // ========== EVENT HANDLERS ==========
+  
   const handleAnswerSelect = (answerIndex) => {
-    if (showResult) return;
+    if (showResult || !dailyTasks[currentTaskIndex]) return;
     
+    const currentTask = dailyTasks[currentTaskIndex];
     const isCorrect = answerIndex === currentTask.correctAnswer;
+    
     const newAnswer = {
       taskId: currentTask.id,
       category: currentTask.category,
@@ -112,15 +81,15 @@ export default function DailySession({
       isCorrect,
       points: isCorrect ? currentTask.points : 0
     };
-
+    
     setSessionAnswers(prev => [...prev, newAnswer]);
     setShowResult(true);
-
+    
     if (isCorrect) {
       onAddPoints(currentTask.points);
       onUpdateStrength(currentTask.category, 5);
     }
-
+    
     setTimeout(() => {
       if (currentTaskIndex < dailyTasks.length - 1) {
         setCurrentTaskIndex(prev => prev + 1);
@@ -132,8 +101,10 @@ export default function DailySession({
   };
 
   const handleTextSubmit = () => {
-    if (!userAnswer.trim()) return;
-
+    if (!userAnswer.trim() || !dailyTasks[currentTaskIndex]) return;
+    
+    const currentTask = dailyTasks[currentTaskIndex];
+    
     const newAnswer = {
       taskId: currentTask.id,
       category: currentTask.category,
@@ -141,12 +112,13 @@ export default function DailySession({
       isCorrect: true,
       points: currentTask.points
     };
-
+    
     setSessionAnswers(prev => [...prev, newAnswer]);
     onAddPoints(currentTask.points);
     onUpdateStrength(currentTask.category, 5);
+    
     setShowResult(true);
-
+    
     setTimeout(() => {
       if (currentTaskIndex < dailyTasks.length - 1) {
         setCurrentTaskIndex(prev => prev + 1);
@@ -160,10 +132,10 @@ export default function DailySession({
 
   const handleSessionComplete = () => {
     setSessionComplete(true);
-
+    
     const totalPoints = sessionAnswers.reduce((sum, ans) => sum + ans.points, 0);
     const accuracy = calculateAccuracy(sessionAnswers);
-
+    
     onComplete({
       answers: sessionAnswers,
       totalPoints,
@@ -172,7 +144,40 @@ export default function DailySession({
     });
   };
 
-  // ========== COMPLETION SCREEN ==========
+  // ========== CONDITIONAL RENDERING - NACH ALLEN HOOKS! ==========
+
+  // Loading Screen
+  if (isLoading) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-6" />
+          <h3 className="text-xl font-bold mb-2">Generiere deine Fragen...</h3>
+          <p className="text-gray-600">
+            KI erstellt personalisierte Aufgaben für dich 🤖
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error Screen
+  if (error) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <div className="text-6xl mb-4">😕</div>
+          <h3 className="text-xl font-bold mb-2">Ups, etwas ist schiefgelaufen</h3>
+          <p className="text-gray-600 mb-6">{error}</p>
+          <Button onClick={() => window.location.reload()}>
+            Erneut versuchen
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Completion Screen
   if (sessionComplete) {
     const totalPoints = sessionAnswers.reduce((sum, ans) => sum + ans.points, 0);
     const correctAnswers = sessionAnswers.filter(ans => ans.isCorrect).length;
@@ -181,7 +186,6 @@ export default function DailySession({
     return (
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
-          {/* Success Icon */}
           <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
             <CheckCircle className="w-12 h-12 text-green-600" />
           </div>
@@ -191,7 +195,6 @@ export default function DailySession({
             {getMotivationMessage(accuracy)}
           </p>
           
-          {/* Statistiken */}
           <div className="grid grid-cols-3 gap-4 mb-8">
             <div className="bg-purple-50 rounded-xl p-6">
               <div className="text-4xl font-bold text-purple-600 mb-2">
@@ -215,13 +218,12 @@ export default function DailySession({
             </div>
           </div>
           
-          {/* Antworten-Review */}
           <div className="bg-gray-50 rounded-xl p-6 mb-6 text-left">
             <h3 className="font-bold mb-4">Deine Antworten:</h3>
             <div className="space-y-3">
               {sessionAnswers.map((ans, idx) => (
                 <div key={idx} className="flex items-center gap-3">
-                  <span className={`text-xl ${ans.isCorrect ? '✅' : '❌'}`}>
+                  <span className="text-xl">
                     {ans.isCorrect ? '✅' : '❌'}
                   </span>
                   <span className="text-sm text-gray-700 capitalize">
@@ -240,13 +242,24 @@ export default function DailySession({
     );
   }
 
-  // ========== ACTIVE QUIZ SCREEN ==========
+  // Active Quiz - Sicherstellen dass dailyTasks existiert
+  if (!dailyTasks || dailyTasks.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <p>Keine Fragen verfügbar</p>
+        </div>
+      </div>
+    );
+  }
+
+  const currentTask = dailyTasks[currentTaskIndex];
+
   return (
     <div className="max-w-3xl mx-auto">
       {/* Timer und Fortschritt */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200 mb-6">
         <div className="flex items-center justify-between">
-          {/* Fortschrittsbalken */}
           <div className="flex gap-2 flex-1">
             {dailyTasks.map((_, idx) => (
               <div 
@@ -260,7 +273,6 @@ export default function DailySession({
             ))}
           </div>
           
-          {/* Timer */}
           <div className="flex items-center gap-2 text-gray-600 ml-4">
             <Clock className="w-4 h-4" />
             <span className="font-mono font-semibold">
@@ -282,7 +294,7 @@ export default function DailySession({
           {currentTask.question}
         </h3>
         
-        {/* Multiple Choice Fragen */}
+        {/* Multiple Choice */}
         {currentTask.type !== 'open' && currentTask.options && (
           <div className="space-y-3">
             {currentTask.options.map((option, idx) => {
@@ -316,7 +328,7 @@ export default function DailySession({
           </div>
         )}
         
-        {/* Open Text Questions */}
+        {/* Open Text */}
         {currentTask.type === 'open' && !showResult && (
           <div className="space-y-4">
             <textarea
@@ -334,8 +346,8 @@ export default function DailySession({
           </div>
         )}
         
-        {/* Feedback nach Antwort */}
-        {showResult && (
+        {/* Feedback */}
+        {showResult && currentTask.explanation && (
           <div className={`mt-6 p-4 rounded-xl ${
             sessionAnswers[sessionAnswers.length - 1]?.isCorrect 
               ? 'bg-green-50 border border-green-200' 
