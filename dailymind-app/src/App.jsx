@@ -83,6 +83,7 @@ function App() {
             onComplete={handleSessionComplete}
             onAddPoints={addPoints}
             onUpdateStrength={updateStrength}
+            userStrengths={progress.strengths}
           />
         );
       

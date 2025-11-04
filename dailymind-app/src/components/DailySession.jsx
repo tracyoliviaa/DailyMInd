@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Clock, CheckCircle } from 'lucide-react';
 import { CategoryBadge, Button } from './UI';
 import { formatTime, getMotivationMessage, calculateAccuracy } from '../utils/helpers';
-import { dailyTasks } from '../data/mockData';
+
+// ❗ NEU: dynamischer Fragen-Generator
+import { generateDailySession } from '../services/questionGenerator';
 
 // ============================================
 // DAILY SESSION COMPONENT
@@ -10,9 +12,10 @@ import { dailyTasks } from '../data/mockData';
 // ============================================
 
 export default function DailySession({ 
-  onComplete,    // Callback wenn Session fertig
-  onAddPoints,   // Callback zum Punkte hinzufügen
-  onUpdateStrength  // Callback für Stärken-Update
+  onComplete,        // Callback wenn Session fertig
+  onAddPoints,       // Callback zum Punkte hinzufügen
+  onUpdateStrength,  // Callback zum Updaten der Stärken
+  userStrengths      // ❗ neu: User-Stärken als Input für KI-Generator
 }) {
   // ========== STATE ==========
   const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
@@ -22,6 +25,64 @@ export default function DailySession({
   const [timeLeft, setTimeLeft] = useState(600); // 10 Minuten
   const [userAnswer, setUserAnswer] = useState('');
 
+  // ❗ NEU: dynamische Fragen statt statisches dailyTasks import
+  const [dailyTasks, setDailyTasks] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // ========== LADEN DER FRAGEN (NEU) ==========
+  useEffect(() => {
+    async function loadQuestions() {
+      setIsLoading(true);
+      try {
+        // ruft KI/Logik auf → personalisierte Fragen
+        const questions = await generateDailySession(userStrengths);
+        setDailyTasks(questions);
+        setError(null);
+      } catch (err) {
+        setError('Fragen konnten nicht geladen werden. Versuche es später erneut.');
+        console.error(err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadQuestions();
+  }, [userStrengths]); // damit sich Fragen neu generieren, wenn sich Stärken ändern
+
+  // ========== LOADING SCREEN ==========
+  if (isLoading) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-6" />
+          <h3 className="text-xl font-bold mb-2">Generiere deine Fragen...</h3>
+          <p className="text-gray-600">KI erstellt personalisierte Aufgaben für dich 🤖</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ========== ERROR SCREEN ==========
+  if (error) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <div className="text-6xl mb-4">😕</div>
+          <h3 className="text-xl font-bold mb-2">Ups, etwas ist schiefgelaufen</h3>
+          <p className="text-gray-600 mb-6">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold"
+          >
+            Erneut versuchen
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ❗ Wichtig: ab hier läuft alles weiter wie vorher
   const currentTask = dailyTasks[currentTaskIndex];
 
   // ========== TIMER EFFECT ==========
@@ -30,28 +91,20 @@ export default function DailySession({
       const timer = setInterval(() => {
         setTimeLeft(prev => prev - 1);
       }, 1000);
-      
-      // Cleanup: Timer stoppen bei Component Unmount
+
       return () => clearInterval(timer);
     }
-    
-    // Zeit abgelaufen
+
     if (timeLeft === 0 && !sessionComplete) {
       handleSessionComplete();
     }
   }, [sessionComplete, timeLeft]);
 
   // ========== EVENT HANDLERS ==========
-  
-  /**
-   * Antwort auswählen (Multiple Choice)
-   */
   const handleAnswerSelect = (answerIndex) => {
-    if (showResult) return; // Verhindere doppelte Klicks
+    if (showResult) return;
     
     const isCorrect = answerIndex === currentTask.correctAnswer;
-    
-    // Answer speichern
     const newAnswer = {
       taskId: currentTask.id,
       category: currentTask.category,
@@ -59,17 +112,15 @@ export default function DailySession({
       isCorrect,
       points: isCorrect ? currentTask.points : 0
     };
-    
+
     setSessionAnswers(prev => [...prev, newAnswer]);
     setShowResult(true);
-    
-    // Punkte sofort hinzufügen
+
     if (isCorrect) {
       onAddPoints(currentTask.points);
       onUpdateStrength(currentTask.category, 5);
     }
-    
-    // Nach 2 Sekunden zur nächsten Frage
+
     setTimeout(() => {
       if (currentTaskIndex < dailyTasks.length - 1) {
         setCurrentTaskIndex(prev => prev + 1);
@@ -80,13 +131,9 @@ export default function DailySession({
     }, 2000);
   };
 
-  /**
-   * Textantwort submitten (Open Questions)
-   */
   const handleTextSubmit = () => {
     if (!userAnswer.trim()) return;
-    
-    // Bei kreativen Fragen gibt es keine "falsche" Antwort
+
     const newAnswer = {
       taskId: currentTask.id,
       category: currentTask.category,
@@ -94,13 +141,12 @@ export default function DailySession({
       isCorrect: true,
       points: currentTask.points
     };
-    
+
     setSessionAnswers(prev => [...prev, newAnswer]);
     onAddPoints(currentTask.points);
     onUpdateStrength(currentTask.category, 5);
-    
     setShowResult(true);
-    
+
     setTimeout(() => {
       if (currentTaskIndex < dailyTasks.length - 1) {
         setCurrentTaskIndex(prev => prev + 1);
@@ -112,16 +158,12 @@ export default function DailySession({
     }, 2000);
   };
 
-  /**
-   * Session abschließen
-   */
   const handleSessionComplete = () => {
     setSessionComplete(true);
-    
-    // Callback an Parent
+
     const totalPoints = sessionAnswers.reduce((sum, ans) => sum + ans.points, 0);
     const accuracy = calculateAccuracy(sessionAnswers);
-    
+
     onComplete({
       answers: sessionAnswers,
       totalPoints,
@@ -223,3 +265,94 @@ export default function DailySession({
             <Clock className="w-4 h-4" />
             <span className="font-mono font-semibold">
               {formatTime(timeLeft)}
+            </span>
+          </div>
+        </div>
+        
+        <p className="text-sm text-gray-600 mt-2">
+          Frage {currentTaskIndex + 1} von {dailyTasks.length}
+        </p>
+      </div>
+
+      {/* Aufgaben-Karte */}
+      <div className="bg-white rounded-2xl p-8 shadow-lg">
+        <CategoryBadge category={currentTask.category} />
+        
+        <h3 className="text-2xl font-bold mt-4 mb-6">
+          {currentTask.question}
+        </h3>
+        
+        {/* Multiple Choice Fragen */}
+        {currentTask.type !== 'open' && currentTask.options && (
+          <div className="space-y-3">
+            {currentTask.options.map((option, idx) => {
+              const isSelected = sessionAnswers[sessionAnswers.length - 1]?.answer === idx;
+              const isCorrect = idx === currentTask.correctAnswer;
+              
+              return (
+                <button
+                  key={idx}
+                  onClick={() => handleAnswerSelect(idx)}
+                  disabled={showResult}
+                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                    showResult && isCorrect
+                      ? 'border-green-500 bg-green-50'
+                      : showResult && isSelected && !isCorrect
+                      ? 'border-red-500 bg-red-50'
+                      : showResult
+                      ? 'border-gray-200 opacity-50'
+                      : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-semibold text-sm">
+                      {String.fromCharCode(65 + idx)}
+                    </div>
+                    <span className="font-medium">{option}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        
+        {/* Open Text Questions */}
+        {currentTask.type === 'open' && !showResult && (
+          <div className="space-y-4">
+            <textarea
+              value={userAnswer}
+              onChange={(e) => setUserAnswer(e.target.value)}
+              placeholder="Deine kreative Antwort..."
+              className="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:outline-none min-h-[120px]"
+            />
+            <Button 
+              onClick={handleTextSubmit}
+              disabled={!userAnswer.trim()}
+            >
+              Antwort absenden
+            </Button>
+          </div>
+        )}
+        
+        {/* Feedback nach Antwort */}
+        {showResult && (
+          <div className={`mt-6 p-4 rounded-xl ${
+            sessionAnswers[sessionAnswers.length - 1]?.isCorrect 
+              ? 'bg-green-50 border border-green-200' 
+              : currentTask.type === 'open'
+              ? 'bg-blue-50 border border-blue-200'
+              : 'bg-orange-50 border border-orange-200'
+          }`}>
+            <p className="font-semibold mb-2">
+              {sessionAnswers[sessionAnswers.length - 1]?.isCorrect ? '✓ Richtig!' : 
+               currentTask.type === 'open' ? '✓ Großartig!' : 'Nicht ganz...'}
+            </p>
+            <p className="text-sm text-gray-700">
+              {currentTask.explanation}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
