@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Clock, CheckCircle } from 'lucide-react';
 import { CategoryBadge, Button } from './UI';
 import { formatTime, getMotivationMessage, calculateAccuracy } from '../utils/helpers';
-import { dailyTasks } from '../data/mockData';
+import { generateDailySession } from '../services/questionGenerator';
 
 // ============================================
 // DAILY SESSION COMPONENT
@@ -10,48 +10,70 @@ import { dailyTasks } from '../data/mockData';
 // ============================================
 
 export default function DailySession({ 
-  onComplete,    // Callback wenn Session fertig
-  onAddPoints,   // Callback zum Punkte hinzufügen
-  onUpdateStrength  // Callback für Stärken-Update
+  onComplete,
+  onAddPoints,
+  onUpdateStrength,
+  userStrengths = {}
 }) {
-  // ========== STATE ==========
+  // ========== STATE - ALLE GANZ OBEN! ==========
   const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
   const [sessionAnswers, setSessionAnswers] = useState([]);
   const [showResult, setShowResult] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(600); // 10 Minuten
+  const [timeLeft, setTimeLeft] = useState(600);
   const [userAnswer, setUserAnswer] = useState('');
+  
+  // NEU: State für generierte Fragen
+  const [dailyTasks, setDailyTasks] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const currentTask = dailyTasks[currentTaskIndex];
-
-  // ========== TIMER EFFECT ==========
+  // ========== ALLE useEffect HOOKS HIER ==========
+  
+  // Effect 1: Fragen laden beim Mount
   useEffect(() => {
-    if (!sessionComplete && timeLeft > 0) {
+    async function loadQuestions() {
+      setIsLoading(true);
+      try {
+        console.log('Generiere Fragen...');
+        const questions = await generateDailySession(userStrengths);
+        setDailyTasks(questions);
+        setError(null);
+        console.log('Fragen erfolgreich geladen:', questions);
+      } catch (err) {
+        console.error('Fehler beim Laden:', err);
+        setError('Fragen konnten nicht geladen werden. Versuche es später erneut.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadQuestions();
+  }, []); // Nur beim Mount ausführen
+
+  // Effect 2: Timer
+  useEffect(() => {
+    if (!sessionComplete && !isLoading && timeLeft > 0 && dailyTasks.length > 0) {
       const timer = setInterval(() => {
         setTimeLeft(prev => prev - 1);
       }, 1000);
       
-      // Cleanup: Timer stoppen bei Component Unmount
       return () => clearInterval(timer);
     }
     
-    // Zeit abgelaufen
     if (timeLeft === 0 && !sessionComplete) {
       handleSessionComplete();
     }
-  }, [sessionComplete, timeLeft]);
+  }, [sessionComplete, isLoading, timeLeft, dailyTasks]);
 
   // ========== EVENT HANDLERS ==========
   
-  /**
-   * Antwort auswählen (Multiple Choice)
-   */
   const handleAnswerSelect = (answerIndex) => {
-    if (showResult) return; // Verhindere doppelte Klicks
+    if (showResult || !dailyTasks[currentTaskIndex]) return;
     
+    const currentTask = dailyTasks[currentTaskIndex];
     const isCorrect = answerIndex === currentTask.correctAnswer;
     
-    // Answer speichern
     const newAnswer = {
       taskId: currentTask.id,
       category: currentTask.category,
@@ -63,13 +85,11 @@ export default function DailySession({
     setSessionAnswers(prev => [...prev, newAnswer]);
     setShowResult(true);
     
-    // Punkte sofort hinzufügen
     if (isCorrect) {
       onAddPoints(currentTask.points);
       onUpdateStrength(currentTask.category, 5);
     }
     
-    // Nach 2 Sekunden zur nächsten Frage
     setTimeout(() => {
       if (currentTaskIndex < dailyTasks.length - 1) {
         setCurrentTaskIndex(prev => prev + 1);
@@ -80,13 +100,11 @@ export default function DailySession({
     }, 2000);
   };
 
-  /**
-   * Textantwort submitten (Open Questions)
-   */
   const handleTextSubmit = () => {
-    if (!userAnswer.trim()) return;
+    if (!userAnswer.trim() || !dailyTasks[currentTaskIndex]) return;
     
-    // Bei kreativen Fragen gibt es keine "falsche" Antwort
+    const currentTask = dailyTasks[currentTaskIndex];
+    
     const newAnswer = {
       taskId: currentTask.id,
       category: currentTask.category,
@@ -112,13 +130,9 @@ export default function DailySession({
     }, 2000);
   };
 
-  /**
-   * Session abschließen
-   */
   const handleSessionComplete = () => {
     setSessionComplete(true);
     
-    // Callback an Parent
     const totalPoints = sessionAnswers.reduce((sum, ans) => sum + ans.points, 0);
     const accuracy = calculateAccuracy(sessionAnswers);
     
@@ -130,7 +144,40 @@ export default function DailySession({
     });
   };
 
-  // ========== COMPLETION SCREEN ==========
+  // ========== CONDITIONAL RENDERING - NACH ALLEN HOOKS! ==========
+
+  // Loading Screen
+  if (isLoading) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <div className="w-16 h-16 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-6" />
+          <h3 className="text-xl font-bold mb-2">Generiere deine Fragen...</h3>
+          <p className="text-gray-600">
+            KI erstellt personalisierte Aufgaben für dich 🤖
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error Screen
+  if (error) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <div className="text-6xl mb-4">😕</div>
+          <h3 className="text-xl font-bold mb-2">Ups, etwas ist schiefgelaufen</h3>
+          <p className="text-gray-600 mb-6">{error}</p>
+          <Button onClick={() => window.location.reload()}>
+            Erneut versuchen
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Completion Screen
   if (sessionComplete) {
     const totalPoints = sessionAnswers.reduce((sum, ans) => sum + ans.points, 0);
     const correctAnswers = sessionAnswers.filter(ans => ans.isCorrect).length;
@@ -139,7 +186,6 @@ export default function DailySession({
     return (
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
-          {/* Success Icon */}
           <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
             <CheckCircle className="w-12 h-12 text-green-600" />
           </div>
@@ -149,7 +195,6 @@ export default function DailySession({
             {getMotivationMessage(accuracy)}
           </p>
           
-          {/* Statistiken */}
           <div className="grid grid-cols-3 gap-4 mb-8">
             <div className="bg-purple-50 rounded-xl p-6">
               <div className="text-4xl font-bold text-purple-600 mb-2">
@@ -173,13 +218,12 @@ export default function DailySession({
             </div>
           </div>
           
-          {/* Antworten-Review */}
           <div className="bg-gray-50 rounded-xl p-6 mb-6 text-left">
             <h3 className="font-bold mb-4">Deine Antworten:</h3>
             <div className="space-y-3">
               {sessionAnswers.map((ans, idx) => (
                 <div key={idx} className="flex items-center gap-3">
-                  <span className={`text-xl ${ans.isCorrect ? '✅' : '❌'}`}>
+                  <span className="text-xl">
                     {ans.isCorrect ? '✅' : '❌'}
                   </span>
                   <span className="text-sm text-gray-700 capitalize">
@@ -198,13 +242,24 @@ export default function DailySession({
     );
   }
 
-  // ========== ACTIVE QUIZ SCREEN ==========
+  // Active Quiz - Sicherstellen dass dailyTasks existiert
+  if (!dailyTasks || dailyTasks.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+          <p>Keine Fragen verfügbar</p>
+        </div>
+      </div>
+    );
+  }
+
+  const currentTask = dailyTasks[currentTaskIndex];
+
   return (
     <div className="max-w-3xl mx-auto">
       {/* Timer und Fortschritt */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200 mb-6">
         <div className="flex items-center justify-between">
-          {/* Fortschrittsbalken */}
           <div className="flex gap-2 flex-1">
             {dailyTasks.map((_, idx) => (
               <div 
@@ -218,8 +273,98 @@ export default function DailySession({
             ))}
           </div>
           
-          {/* Timer */}
           <div className="flex items-center gap-2 text-gray-600 ml-4">
             <Clock className="w-4 h-4" />
             <span className="font-mono font-semibold">
               {formatTime(timeLeft)}
+            </span>
+          </div>
+        </div>
+        
+        <p className="text-sm text-gray-600 mt-2">
+          Frage {currentTaskIndex + 1} von {dailyTasks.length}
+        </p>
+      </div>
+
+      {/* Aufgaben-Karte */}
+      <div className="bg-white rounded-2xl p-8 shadow-lg">
+        <CategoryBadge category={currentTask.category} />
+        
+        <h3 className="text-2xl font-bold mt-4 mb-6">
+          {currentTask.question}
+        </h3>
+        
+        {/* Multiple Choice */}
+        {currentTask.type !== 'open' && currentTask.options && (
+          <div className="space-y-3">
+            {currentTask.options.map((option, idx) => {
+              const isSelected = sessionAnswers[sessionAnswers.length - 1]?.answer === idx;
+              const isCorrect = idx === currentTask.correctAnswer;
+              
+              return (
+                <button
+                  key={idx}
+                  onClick={() => handleAnswerSelect(idx)}
+                  disabled={showResult}
+                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                    showResult && isCorrect
+                      ? 'border-green-500 bg-green-50'
+                      : showResult && isSelected && !isCorrect
+                      ? 'border-red-500 bg-red-50'
+                      : showResult
+                      ? 'border-gray-200 opacity-50'
+                      : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-semibold text-sm">
+                      {String.fromCharCode(65 + idx)}
+                    </div>
+                    <span className="font-medium">{option}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        
+        {/* Open Text */}
+        {currentTask.type === 'open' && !showResult && (
+          <div className="space-y-4">
+            <textarea
+              value={userAnswer}
+              onChange={(e) => setUserAnswer(e.target.value)}
+              placeholder="Deine kreative Antwort..."
+              className="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-purple-400 focus:outline-none min-h-[120px]"
+            />
+            <Button 
+              onClick={handleTextSubmit}
+              disabled={!userAnswer.trim()}
+            >
+              Antwort absenden
+            </Button>
+          </div>
+        )}
+        
+        {/* Feedback */}
+        {showResult && currentTask.explanation && (
+          <div className={`mt-6 p-4 rounded-xl ${
+            sessionAnswers[sessionAnswers.length - 1]?.isCorrect 
+              ? 'bg-green-50 border border-green-200' 
+              : currentTask.type === 'open'
+              ? 'bg-blue-50 border border-blue-200'
+              : 'bg-orange-50 border border-orange-200'
+          }`}>
+            <p className="font-semibold mb-2">
+              {sessionAnswers[sessionAnswers.length - 1]?.isCorrect ? '✓ Richtig!' : 
+               currentTask.type === 'open' ? '✓ Großartig!' : 'Nicht ganz...'}
+            </p>
+            <p className="text-sm text-gray-700">
+              {currentTask.explanation}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
