@@ -1,63 +1,39 @@
-import OpenAI from 'openai';
-
 // ============================================
-// OPENAI QUESTION GENERATOR SERVICE
-// Generiert intelligente, personalisierte Fragen
+// QUESTION GENERATOR SERVICE (BROWSER-FIXED)
+// Verwendet fetch statt OpenAI SDK für Browser
 // ============================================
-
-const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true // Nur für Development!
-});
 
 /**
- * Generiert eine einzelne Frage basierend auf Kategorie
+ * Generiert eine einzelne Frage via OpenAI API
  */
 export async function generateQuestion(category, difficulty = 'medium') {
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+  
+  // Fallback wenn kein API Key
+  if (!apiKey || apiKey === 'sk-dein-api-key-hier') {
+    console.warn('⚠️ Kein OpenAI API Key - verwende Mock-Daten');
+    return getMockQuestion(category, difficulty);
+  }
+
   const prompts = {
     logic: `Erstelle eine logische Denkaufgabe (Schwierigkeit: ${difficulty}).
-    
-Format:
+Format als JSON:
 {
   "question": "Die Frage",
   "options": ["Option A", "Option B", "Option C", "Option D"],
-  "correctAnswer": 0-3 (Index der richtigen Antwort),
+  "correctAnswer": 0,
   "explanation": "Warum diese Antwort richtig ist"
-}
-
-Die Frage soll:
-- Logisches Denken fördern
-- Nicht zu einfach sein
-- Keine Tricks enthalten
-- Auf Deutsch sein`,
+}`,
 
     language: `Erstelle eine Sprachaufgabe (Schwierigkeit: ${difficulty}).
-    
-Themen: Wortschatz, Grammatik, Fremdwörter, Redewendungen
-
-Format:
-{
-  "question": "Die Frage",
-  "options": ["Option A", "Option B", "Option C", "Option D"],
-  "correctAnswer": 0-3,
-  "explanation": "Erklärung mit Herkunft/Bedeutung"
-}`,
+Themen: Wortschatz, Grammatik, Fremdwörter
+Format als JSON wie oben.`,
 
     knowledge: `Erstelle eine Allgemeinwissens-Frage (Schwierigkeit: ${difficulty}).
-    
-Bereiche: Geschichte, Geographie, Wissenschaft, Kultur
-
-Format:
-{
-  "question": "Die Frage",
-  "options": ["Option A", "Option B", "Option C", "Option D"],
-  "correctAnswer": 0-3,
-  "explanation": "Interessante Details zur Antwort"
-}`,
+Format als JSON wie oben.`,
 
     memory: `Erstelle eine Gedächtnisaufgabe (Schwierigkeit: ${difficulty}).
-    
-Format:
+Format als JSON:
 {
   "question": "Merke dir diese Sequenz: [5-7 Elemente]",
   "type": "memory",
@@ -66,37 +42,47 @@ Format:
 }`,
 
     creativity: `Erstelle eine kreative Aufgabe (Schwierigkeit: ${difficulty}).
-    
-Format:
+Format als JSON:
 {
   "question": "Vervollständige kreativ: ...",
   "type": "open",
-  "explanation": "Es gibt keine falsche Antwort! Kreativität zählt."
+  "explanation": "Es gibt keine falsche Antwort!"
 }`
   };
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Günstiger als gpt-4
-      messages: [
-        {
-          role: "system",
-          content: "Du bist ein Experte für Lernpsychologie und erstellst anspruchsvolle, aber faire Lernaufgaben. Antworte immer nur mit validem JSON."
-        },
-        {
-          role: "user",
-          content: prompts[category] || prompts.knowledge
-        }
-      ],
-      temperature: 0.8, // Kreativität
-      response_format: { type: "json_object" }
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "Du bist ein Experte für Lernpsychologie. Antworte nur mit validem JSON."
+          },
+          {
+            role: "user",
+            content: prompts[category] || prompts.knowledge
+          }
+        ],
+        temperature: 0.8,
+        response_format: { type: "json_object" }
+      })
     });
 
-    const questionData = JSON.parse(response.choices[0].message.content);
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const questionData = JSON.parse(data.choices[0].message.content);
     
-    // Füge Metadaten hinzu
     return {
-      id: Date.now(),
+      id: Date.now() + Math.random(),
       category,
       difficulty,
       points: difficulty === 'easy' ? 15 : difficulty === 'medium' ? 25 : 35,
@@ -105,8 +91,8 @@ Format:
     };
 
   } catch (error) {
-    console.error('Error generating question:', error);
-    throw error;
+    console.error('OpenAI Error:', error);
+    return getMockQuestion(category, difficulty);
   }
 }
 
@@ -116,7 +102,6 @@ Format:
 export async function generateDailySession(userStrengths = {}) {
   const categories = ['logic', 'language', 'knowledge', 'memory', 'creativity'];
   
-  // Bestimme Schwierigkeit basierend auf User-Stärken
   const getDifficulty = (category) => {
     const strength = userStrengths[category] || 50;
     if (strength < 40) return 'easy';
@@ -130,12 +115,15 @@ export async function generateDailySession(userStrengths = {}) {
     const difficulty = getDifficulty(category);
     
     try {
-      const question = await generateQuestion(category, difficulty, userStrengths);
+      const question = await generateQuestion(category, difficulty);
       questions.push(question);
+      
+      // Kleine Verzögerung zwischen Requests
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
     } catch (error) {
-      console.error(`Failed to generate ${category} question:`, error);
-      // Fallback zu Mock-Fragen
-      questions.push(getMockQuestion(category));
+      console.error(`Failed ${category}:`, error);
+      questions.push(getMockQuestion(category, difficulty));
     }
   }
 
@@ -143,9 +131,9 @@ export async function generateDailySession(userStrengths = {}) {
 }
 
 /**
- * Fallback Mock-Frage wenn API fehlschlägt
+ * Mock-Fragen als Fallback
  */
-function getMockQuestion(category) {
+function getMockQuestion(category, difficulty = 'medium') {
   const mockQuestions = {
     logic: {
       question: "Wenn es regnet, ist die Straße nass. Die Straße ist nass. Was folgt daraus?",
@@ -156,15 +144,45 @@ function getMockQuestion(category) {
         "Es wird bald regnen"
       ],
       correctAnswer: 2,
-      explanation: "Nur weil die Straße nass ist, muss es nicht geregnet haben (könnte gegossen worden sein)."
+      explanation: "Dies ist ein klassischer logischer Fehlschluss. Nur weil die Straße nass ist, muss es nicht geregnet haben - sie könnte auch gegossen worden sein."
     },
-    // ... weitere Mock-Fragen
+    language: {
+      question: "Was bedeutet das Wort 'ephemer'?",
+      options: [
+        "Sehr alt und wertvoll",
+        "Kurz lebend, vergänglich",
+        "Emotional berührend",
+        "Schwer zu verstehen"
+      ],
+      correctAnswer: 1,
+      explanation: "'Ephemer' kommt vom griechischen 'ephemeros' und bedeutet kurzlebig oder flüchtig."
+    },
+    knowledge: {
+      question: "In welchem Jahr fiel die Berliner Mauer?",
+      options: ["1987", "1989", "1990", "1991"],
+      correctAnswer: 1,
+      explanation: "Die Berliner Mauer fiel am 9. November 1989, was den Beginn der deutschen Wiedervereinigung markierte."
+    },
+    memory: {
+      question: "Merke dir diese Zahlenfolge: 7-3-9-2-8-5",
+      type: "memory",
+      correctAnswer: "739285",
+      explanation: "Ein Tipp: Versuche Muster zu erkennen oder Geschichten zu bilden - das hilft beim Merken!"
+    },
+    creativity: {
+      question: "Vervollständige kreativ: 'Wenn Wolken Gedanken hätten, würden sie...'",
+      type: "open",
+      explanation: "Bei kreativen Aufgaben gibt es keine falsche Antwort. Lass deiner Fantasie freien Lauf! 🎨"
+    }
   };
 
+  const baseQuestion = mockQuestions[category] || mockQuestions.knowledge;
+  
   return {
-    id: Date.now(),
+    id: Date.now() + Math.random(),
     category,
-    points: 20,
-    ...mockQuestions[category]
+    difficulty,
+    points: difficulty === 'easy' ? 15 : difficulty === 'medium' ? 25 : 35,
+    ...baseQuestion
   };
 }
